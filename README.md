@@ -14,14 +14,7 @@ Needs `bash`, `jq`, and `claude`.
 
 ## Use
 
-Inside any project:
-
-```sh
-claude-queue auto on
-claude
-```
-
-Work as usual. When you think of the next thing, type it into the session:
+Inside any Claude session, when you think of the next thing, type:
 
 ```
 /q write tests for the login page
@@ -30,7 +23,8 @@ Work as usual. When you think of the next thing, type it into the session:
 ```
 
 Each time Claude finishes, it picks up the next task by itself. When the queue
-is empty it stops as normal. Bare `/q` shows what's pending.
+is empty it stops as normal. Bare `/q` shows what's pending, and
+`claude-queue auto off` stops the chaining for that project.
 
 Or skip the session and run the queue headless:
 

@@ -83,6 +83,6 @@ case "${1:-}" in
   run)     shift; run "$@" ;;
   auto)    auto "${2:-}" ;;
   install) setup ;;
-  q)       shift; [ $# -eq 0 ] && list || add "$@" ;;
+  q)       shift; [ $# -eq 0 ] && list || { touch "$Q/auto"; add "$@"; } ;;
   *)       usage ;;
 esac

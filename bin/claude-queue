@@ -15,7 +15,7 @@ claude-queue — run Claude Code tasks one at a time
   rm <n>         remove task n
   run [args]     run tasks with claude -p until the queue is empty; args go to claude
   auto on|off    let an interactive session pick up tasks when it finishes
-  install        PATH symlink, Stop hook in ~/.claude/settings.json, /q command
+  install        PATH symlink, hooks in ~/.claude/settings.json, /q command
 U
 }
 
@@ -73,7 +73,8 @@ setup() {
   cp "$REPO/commands/q.md" ~/.claude/commands/q.md
   [ -f "$s" ] || echo '{}' > "$s"
   grep -q stop-hook.sh "$s" || { jq --arg c "$REPO/hooks/stop-hook.sh" '.hooks.Stop += [{hooks:[{type:"command",command:$c}]}]' "$s" > "$s.tmp" && mv "$s.tmp" "$s"; }
-  echo "installed: $bin/claude-queue, /q command, Stop hook"
+  grep -q session-start.sh "$s" || { jq --arg c "$REPO/hooks/session-start.sh" '.hooks.SessionStart += [{matcher:"startup",hooks:[{type:"command",command:$c}]}]' "$s" > "$s.tmp" && mv "$s.tmp" "$s"; }
+  echo "installed: $bin/claude-queue, /q command, Stop and SessionStart hooks"
 }
 
 case "${1:-}" in
@@ -83,6 +84,6 @@ case "${1:-}" in
   run)     shift; run "$@" ;;
   auto)    auto "${2:-}" ;;
   install) setup ;;
-  q)       shift; [ $# -eq 0 ] && list || { touch "$Q/auto"; add "$@"; } ;;
+  q)       shift; [ $# -eq 0 ] && list || { touch "$Q/auto"; add "$@"; echo "pending:"; list; } ;;
   *)       usage ;;
 esac

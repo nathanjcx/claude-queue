@@ -25,7 +25,7 @@ While Claude is working on something, type the next thing into the same session:
 That's it. When Claude finishes what it's doing, it picks up the first queued task.
 When that's done, the next one. When the queue is empty, it stops and waits for you as usual.
 
-- `/q` on its own shows what's pending.
+- `/q` on its own shows what's pending. Adding a task also lists everything pending, so you can see what will run.
 - `claude-queue rm 2` removes the second task.
 - `claude-queue auto off` pauses the chaining for that project.
 
@@ -50,6 +50,10 @@ Tasks are markdown files in `./.claude-queue/pending/`. A Stop hook in
 chaining on and a task is pending, the hook moves it to `done/` and tells Claude to
 start it instead of stopping. Add `.claude-queue/` to your `.gitignore`.
 
+The queue belongs to the session that filled it. When a new interactive session starts,
+a SessionStart hook moves any leftover pending tasks to `stale/`, so tasks you queued
+yesterday don't surprise you today. Resumed sessions keep their queue.
+
 ## Commands
 
 ```
@@ -58,5 +62,5 @@ list           show pending tasks
 rm <n>         remove task n
 run [args]     run tasks with claude -p until the queue is empty; args go to claude
 auto on|off    let an interactive session pick up tasks when it finishes
-install        PATH symlink, Stop hook in ~/.claude/settings.json, /q command
+install        PATH symlink, hooks in ~/.claude/settings.json, /q command
 ```

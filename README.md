@@ -73,6 +73,12 @@ thing. When Claude finishes its current turn, the hook hands it the first
 pending task; when the queue is empty, Claude stops as usual. `claude-queue auto
 off` pauses chaining without removing the hook.
 
+## How it works
+
+- **Tasks are files.** `add` writes each prompt to `.claude-queue/pending/<id>-<slug>.md`. The id sets the run order, so reordering is just renaming.
+- **The Stop hook hands over the next task.** When Claude finishes a turn and `auto` is on, the hook moves the first pending file to `done/` and returns `{"decision":"block","reason":<prompt>}`. Claude doesn't stop; it starts that task instead.
+- **The chain ends by itself.** With nothing in `pending/`, the hook exits silently and Claude stops as usual. Headless `run` sets `CLAUDE_QUEUE_BATCH` so the hook stays out of its way.
+
 ## Dashboard
 
 ```sh

@@ -92,7 +92,8 @@ assert_file "next id counts done/ too" "$CLAUDE_QUEUE_DIR/pending/0003-next-id-s
 "$Q" q Some queued text >/dev/null
 assert_file "q <text> adds a task" "$CLAUDE_QUEUE_DIR/pending/0004-some-queued-text.md"
 assert_has "q with no args lists" "0004  Some queued text" "$("$Q" q)"
-assert_has "q rm without tty emits pick list" "PICK_TO_REMOVE" "$("$Q" q rm | cat)"
+"$Q" q rm the old cache layer >/dev/null
+assert_file "q rm <text> is just another task" "$CLAUDE_QUEUE_DIR/pending/0005-rm-the-old-cache-layer.md"
 
 echo
 echo "$pass passed, $fail failed"

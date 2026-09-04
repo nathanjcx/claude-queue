@@ -46,7 +46,7 @@ usage: claude-queue <command> [args]
   log <id>               print the output log for a task
   watch                  live dashboard of the queue (q to quit)
   auto on|off            let the Stop hook feed queued tasks into an interactive session
-  install                one-time setup: PATH symlink, user-level Stop hook, /queue slash command
+  install                one-time setup: PATH symlink, user-level Stop hook, /q slash command
   install-hook           add the Stop hook to this project's .claude/settings.json only
 
 env:
@@ -300,16 +300,16 @@ cmd_install() {
   # 2. user-level Stop hook: applies in every project, chains only where \`auto on\` is set
   add_hook_to "$HOME/.claude/settings.json"
 
-  # 3. /queue slash command inside any Claude Code session
+  # 3. /q slash command inside any Claude Code session
   mkdir -p "$HOME/.claude/commands"
-  cp "$REPO_DIR/commands/queue.md" "$HOME/.claude/commands/queue.md"
-  echo "installed /queue slash command ($HOME/.claude/commands/queue.md)"
+  cp "$REPO_DIR/commands/q.md" "$HOME/.claude/commands/q.md"
+  echo "installed /q slash command ($HOME/.claude/commands/q.md)"
 
   cat <<DONE
 
 ready. in any project:
   claude-queue add "next thing"     queue from the shell
-  /queue add next thing             queue from inside a claude session
+  /q add next thing             queue from inside a claude session
   claude-queue run                  run the queue headless, one task at a time
   claude-queue auto on              or let your interactive session pick tasks up when it finishes
   claude-queue watch                live dashboard

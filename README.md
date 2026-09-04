@@ -20,8 +20,8 @@ terminal**:
 1. symlinks `claude-queue` into a directory on your PATH
 2. adds a Stop hook to `~/.claude/settings.json` (user level, so it's active in
    every project; it only chains tasks where you've run `claude-queue auto on`)
-3. installs a `/queue` slash command into `~/.claude/commands/`, so inside any
-   Claude session you can type `/queue add write tests for the parser`
+3. installs a `/q` slash command into `~/.claude/commands/`, so inside any
+   Claude session you can type `/q add write tests for the parser`
 
 Needs `bash`, `jq`, and the `claude` CLI on your PATH. The queue itself is
 per project: it lives in `./.claude-queue/` of whatever directory you're in.
@@ -105,7 +105,7 @@ your interactive session.
 | `watch` | live dashboard |
 | `auto on\|off` | interactive-mode chaining |
 | `install` / `install-hook` | one-time setup / project-only Stop hook |
-| `/queue <args>` (inside Claude) | same commands from a Claude session |
+| `/q <args>` (inside Claude) | same commands from a Claude session |
 
 `CLAUDE_QUEUE_DIR` overrides the queue location (default `./.claude-queue`).
 Add `.claude-queue/` to your project's `.gitignore`.

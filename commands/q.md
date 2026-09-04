@@ -2,7 +2,7 @@
 description: Queue a task for claude-queue, or list/manage the queue (add, list, rm, move, status, auto)
 allowed-tools: Bash(claude-queue:*)
 ---
-The user ran `/queue $ARGUMENTS`. The claude-queue CLI already executed it; here is the output:
+The user ran `/q $ARGUMENTS`. The claude-queue CLI already executed it; here is the output:
 
 ```
 !`claude-queue $ARGUMENTS`

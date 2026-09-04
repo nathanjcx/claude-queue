@@ -110,6 +110,17 @@ your interactive session.
 `CLAUDE_QUEUE_DIR` overrides the queue location (default `./.claude-queue`).
 Add `.claude-queue/` to your project's `.gitignore`.
 
+## Testing
+
+```sh
+bash tests/smoke.sh
+```
+
+Runs against a throwaway queue directory and never invokes `claude`. It
+covers `add` (argument, `-f`, stdin), `list`, `move`, `rm` by id and by
+position, `retry`, `run -n`, `status`, and the `/q` entry point. Prints one
+PASS/FAIL line per check and exits nonzero on any failure.
+
 ## Layout
 
 ```

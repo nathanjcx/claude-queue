@@ -1,11 +1,7 @@
 # claude-queue
 
-Run Claude Code tasks **one after another**. Queue up the next feature or a
-backlog of clean-up tasks while the current one is running; each task starts
-only after the previous one has fully finished.
-
-Tasks are plain markdown files in `.claude-queue/pending/`, so you can edit
-and reorder them with any tool. Nothing runs in parallel.
+Queue up Claude Code tasks and run them one at a time. Each task starts only
+after the previous one has fully finished.
 
 ## Install
 
@@ -14,121 +10,47 @@ git clone <this repo> ~/claude-queue
 ~/claude-queue/bin/claude-queue install
 ```
 
-`install` does three things, once, so the queue works in **any project and any
-terminal**:
+Needs `bash`, `jq`, and `claude`.
 
-1. symlinks `claude-queue` into a directory on your PATH
-2. adds a Stop hook to `~/.claude/settings.json` (user level, so it's active in
-   every project; it only chains tasks where you've run `claude-queue auto on`)
-3. installs a `/q` slash command into `~/.claude/commands/`, so inside any
-   Claude session you can type `/q write tests for the parser`
+## Use
 
-Needs `bash`, `jq`, and the `claude` CLI on your PATH. The queue itself is
-per project: it lives in `./.claude-queue/` of whatever directory you're in.
-
-## Two ways to use it
-
-### 1. Batch mode (headless, `claude -p`)
-
-Queue tasks from any project directory, then run them:
+Inside any project:
 
 ```sh
-cd ~/code/my-app
-claude-queue add "Add a /health endpoint that returns build SHA and uptime"
-claude-queue add "Write tests for the /health endpoint"
-claude-queue add -f backlog/cleanup-imports.md      # longer prompt from a file
-claude-queue list
-
-claude-queue run            # runs each task to completion, in order
-claude-queue run -c         # chain in one session so task N sees what task N-1 did
-claude-queue run -k         # keep going past failures
-claude-queue run -y         # --dangerously-skip-permissions (only in a sandbox you trust)
+claude-queue auto on
+claude
 ```
 
-Each run's output is saved to `.claude-queue/logs/<id>-<slug>.log`. Finished
-tasks move to `done/`, failed ones to `failed/` (`claude-queue retry <id>` puts
-one back). By default the queue stops at the first failure so a broken step
-doesn't cascade.
+Work as usual. When you think of the next thing, type it into the session:
 
-Headless runs use `--permission-mode acceptEdits`. Set
-`CLAUDE_QUEUE_PERMISSION_MODE` or pass extra flags after `--`:
+```
+/q write tests for the login page
+/q add a logout button
+/q clean up unused imports
+```
+
+Each time Claude finishes, it picks up the next task by itself. When the queue
+is empty it stops as normal. Bare `/q` shows what's pending.
+
+Or skip the session and run the queue headless:
 
 ```sh
-claude-queue run -- --allowedTools "Bash(npm test)" --model claude-sonnet-5
+claude-queue add "write tests for the login page"
+claude-queue add "add a logout button"
+claude-queue run                                   # or: run --dangerously-skip-permissions
 ```
-
-### 2. Interactive mode (Stop hook)
-
-Keep working in a normal `claude` session and let the queue feed it the next
-task each time Claude finishes:
-
-```sh
-cd ~/code/my-app
-claude-queue auto on        # hook was installed globally by `claude-queue install`
-claude                      # start (or keep using) your interactive session
-```
-
-Type `/q <next thing>` in the session, or `claude-queue add "..."` from
-another terminal, whenever you think of the next task. When Claude finishes its current turn, the hook hands it the first
-pending task; when the queue is empty, Claude stops as usual. `claude-queue auto
-off` pauses chaining without removing the hook.
-
-## How it works
-
-- **Tasks are files.** `add` writes each prompt to `.claude-queue/pending/<id>-<slug>.md`. The id sets the run order, so reordering is just renaming.
-- **The Stop hook hands over the next task.** When Claude finishes a turn and `auto` is on, the hook moves the first pending file to `done/` and returns `{"decision":"block","reason":<prompt>}`. Claude doesn't stop; it starts that task instead.
-- **The chain ends by itself.** With nothing in `pending/`, the hook exits silently and Claude stops as usual. Headless `run` sets `CLAUDE_QUEUE_BATCH` so the hook stays out of its way.
-
-## Dashboard
-
-```sh
-claude-queue watch
-```
-
-A live terminal view: the task currently running with elapsed time and the
-tail of its log, the pending list, and done/failed counts. Refreshes every
-two seconds; `q` quits. Run it in a split pane next to `claude-queue run` or
-your interactive session.
 
 ## Commands
 
-| command | what it does |
-|---|---|
-| `add <prompt>` / `add -f file` / stdin | queue a task |
-| `list` | pending tasks in run order |
-| `show <id>` / `edit <id>` | view or edit a task's prompt |
-| `move <id> top\|bottom` | reorder |
-| `rm <id>` / `clear` | drop one / all pending tasks |
-| `run [-c] [-k] [-y] [-n] [-- claude args]` | run the queue |
-| `retry <id>` | move a failed task back to pending |
-| `status` / `log <id>` | counts, or a task's saved output |
-| `watch` | live dashboard |
-| `auto on\|off` | interactive-mode chaining |
-| `install` / `install-hook` | one-time setup / project-only Stop hook |
-| `/q <task>` (inside Claude) | queue a task; bare `/q` lists the queue |
-
-`CLAUDE_QUEUE_DIR` overrides the queue location (default `./.claude-queue`).
-Add `.claude-queue/` to your project's `.gitignore`.
-
-## Testing
-
-```sh
-bash tests/smoke.sh
+```
+add <task>     queue a task (or pipe it on stdin)
+list           show pending tasks
+rm <n>         remove task n
+run [args]     run tasks with claude -p until the queue is empty; args go to claude
+auto on|off    let an interactive session pick up tasks when it finishes
+install        PATH symlink, Stop hook in ~/.claude/settings.json, /q command
 ```
 
-Runs against a throwaway queue directory and never invokes `claude`. It
-covers `add` (argument, `-f`, stdin), `list`, `move`, `rm` by id and by
-position, `retry`, `run -n`, `status`, and the `/q` entry point. Prints one
-PASS/FAIL line per check and exits nonzero on any failure.
-
-## Layout
-
-```
-.claude-queue/
-  pending/0001-add-a-health-endpoint.md
-  done/
-  failed/
-  logs/0001-add-a-health-endpoint.log
-  running         # present while `run` has a task in flight
-  auto            # present = Stop hook chaining enabled
-```
+Tasks live in `./.claude-queue/pending/` as plain markdown files. Finished ones
+move to `done/`; headless run output goes to `logs/`. A failed headless run
+stops the queue and leaves the task in place so `run` retries it.

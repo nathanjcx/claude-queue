@@ -1,349 +1,88 @@
 #!/usr/bin/env bash
-# claude-queue — run Claude Code tasks one after another.
-#
-# Tasks are plain markdown files in .claude-queue/pending/. `run` picks the
-# first one, runs it with `claude -p`, waits for it to fully finish, moves it
-# to done/ (or failed/), then picks the next. Nothing runs in parallel.
 set -euo pipefail
 
-VERSION="0.1.0"
-QUEUE_DIR="${CLAUDE_QUEUE_DIR:-$PWD/.claude-queue}"
-PENDING="$QUEUE_DIR/pending"
-DONE="$QUEUE_DIR/done"
-FAILED="$QUEUE_DIR/failed"
-LOGS="$QUEUE_DIR/logs"
-
-# Resolve the repo this script lives in (follows a symlink from /usr/local/bin).
-SELF="$0"
-while [ -L "$SELF" ]; do
-  target=$(readlink "$SELF")
-  case "$target" in /*) SELF="$target" ;; *) SELF="$(dirname "$SELF")/$target" ;; esac
-done
-REPO_DIR=$(cd "$(dirname "$SELF")/.." && pwd)
-HOOK_SCRIPT="$REPO_DIR/hooks/stop-hook.sh"
+Q="${CLAUDE_QUEUE_DIR:-$PWD/.claude-queue}"
+SELF=$0; while [ -L "$SELF" ]; do SELF=$(readlink "$SELF"); done
+REPO=$(cd "$(dirname "$SELF")/.." && pwd)
+mkdir -p "$Q/pending" "$Q/done" "$Q/logs"
 
 usage() {
-  cat <<USAGE
-claude-queue $VERSION — run Claude Code tasks sequentially
+  cat <<U
+claude-queue — run Claude Code tasks one at a time
 
-usage: claude-queue <command> [args]
-
-  add <prompt...>        queue a task (also: add -f file.md, or pipe on stdin)
-  q [<prompt...>]        add; no args lists (what /q calls)
-  list                   show pending tasks in run order
-  show <id>              print a task's full prompt
-  edit <id>              open a task in \$EDITOR
-  rm <id>                remove a pending task
-  move <id> top|bottom   reorder a task
-  clear                  remove all pending tasks
-  run [opts] [-- args]   run pending tasks one at a time until the queue is empty
-      -c, --continue        chain tasks in one Claude session (each sees the last)
-      -k, --keep-going      don't stop the queue when a task fails
-      -y, --yolo            pass --dangerously-skip-permissions
-      -n, --dry-run         print what would run
-      -- <args>             extra args passed straight to \`claude\`
-  retry <id>             move a failed task back to pending
-  status                 counts for pending / done / failed
-  log <id>               print the output log for a task
-  watch                  live dashboard of the queue (q to quit)
-  auto on|off            let the Stop hook feed queued tasks into an interactive session
-  install                one-time setup: PATH symlink, user-level Stop hook, /q slash command
-  install-hook           add the Stop hook to this project's .claude/settings.json only
-
-env:
-  CLAUDE_QUEUE_DIR              queue location (default: ./.claude-queue)
-  CLAUDE_QUEUE_PERMISSION_MODE  --permission-mode for runs (default: acceptEdits)
-USAGE
+  add <task>     queue a task (or pipe it on stdin)
+  list           show pending tasks
+  rm <n>         remove task n
+  run [args]     run tasks with claude -p until the queue is empty; args go to claude
+  auto on|off    let an interactive session pick up tasks when it finishes
+  install        PATH symlink, Stop hook in ~/.claude/settings.json, /q command
+U
 }
 
-die() { echo "claude-queue: $*" >&2; exit 1; }
-ensure_dirs() { mkdir -p "$PENDING" "$DONE" "$FAILED" "$LOGS"; }
-
-next_id() {
-  local last
-  last=$( (ls "$PENDING" "$DONE" "$FAILED" 2>/dev/null || true) | grep -E '^[0-9]{4}-' | sort | tail -1 | cut -c1-4)
-  printf '%04d' $(( 10#${last:-0} + 1 ))
+add() {
+  local text last id slug
+  [ $# -gt 0 ] && text="$*" || text=$(cat)
+  last=$(ls "$Q/pending" "$Q/done" | grep -oE '^[0-9]{4}' | sort | tail -1 || true)
+  id=$(printf '%04d' $(( 10#${last:-0} + 1 )))
+  slug=$(printf '%s' "$text" | head -1 | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | cut -c1-40 | sed 's/-$//')
+  printf '%s\n' "$text" > "$Q/pending/$id-$slug.md"
+  echo "queued #$id  $(printf '%s' "$text" | head -1)"
 }
 
-slugify() {
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//' | cut -c1-40
-}
-
-# find_task <dir> <id-or-position> -> path. Tries the 4-digit id first, then
-# falls back to the 1-based position shown by `list`.
-find_task() {
-  local dir="$1" id="$2" match
-  id=$(printf '%04d' $(( 10#$id )) 2>/dev/null || printf '%s' "$id")
-  match=$(ls "$dir"/"$id"-*.md 2>/dev/null | head -1 || true)
-  if [ -z "$match" ] && [ "$dir" = "$PENDING" ]; then
-    match=$(ls "$PENDING"/*.md 2>/dev/null | sed -n "$(( 10#$2 ))p" || true)
-  fi
-  [ -n "$match" ] || die "no task '$2' in $(basename "$dir")/"
-  printf '%s' "$match"
-}
-
-first_pending() { ls "$PENDING"/*.md 2>/dev/null | head -1 || true; }
-
-cmd_add() {
-  local prompt=""
-  if [ "${1:-}" = "-f" ]; then
-    [ -n "${2:-}" ] || die "add -f needs a file"
-    prompt=$(cat "$2")
-  elif [ $# -gt 0 ]; then
-    prompt="$*"
-  else
-    prompt=$(cat)
-  fi
-  [ -n "$(printf '%s' "$prompt" | tr -d '[:space:]')" ] || die "empty task"
-  ensure_dirs
-  local id slug file
-  id=$(next_id)
-  slug=$(slugify "$(printf '%s\n' "$prompt" | head -1)")
-  file="$PENDING/$id-${slug:-task}.md"
-  printf '%s\n' "$prompt" > "$file"
-  echo "queued #$id  ${file#$PWD/}"
-}
-
-cmd_list() {
-  ensure_dirs
-  local f n=0
-  for f in "$PENDING"/*.md; do
-    [ -e "$f" ] || break
-    n=$((n + 1))
-    printf '%2d. %s  %s\n' "$n" "$(basename "$f" .md | cut -c1-4)" "$(head -1 "$f" | cut -c1-72)"
+list() {
+  local f i=0
+  for f in "$Q/pending"/*.md; do
+    [ -e "$f" ] || { echo "queue is empty"; return; }
+    printf '%2d. %s\n' $((++i)) "$(head -1 "$f")"
   done
-  [ "$n" -gt 0 ] || echo "queue is empty"
 }
 
-cmd_show() { cat "$(find_task "$PENDING" "${1:?usage: show <id>}")"; }
-cmd_edit() { "${EDITOR:-vi}" "$(find_task "$PENDING" "${1:?usage: edit <id>}")"; }
-
-cmd_rm() {
-  local f; f=$(find_task "$PENDING" "${1:?usage: rm <id>}")
-  rm "$f"; echo "removed $(basename "$f" .md)"
+remove() {
+  local f; f=$(ls "$Q/pending"/*.md 2>/dev/null | sed -n "${1:?usage: rm <n>}p")
+  [ -n "$f" ] || { echo "no task $1"; exit 1; }
+  echo "removed: $(head -1 "$f")"; rm "$f"
 }
 
-cmd_clear() {
-  ensure_dirs
-  rm -f "$PENDING"/*.md
-  echo "queue cleared"
-}
-
-cmd_move() {
-  local target f slug i=0 ordered=()
-  target=$(find_task "$PENDING" "${1:?usage: move <id> top|bottom}")
-  case "${2:-}" in
-    top)    ordered=("$target"); for f in "$PENDING"/*.md; do [ "$f" != "$target" ] && ordered+=("$f"); done ;;
-    bottom) for f in "$PENDING"/*.md; do [ "$f" != "$target" ] && ordered+=("$f"); done; ordered+=("$target") ;;
-    *)      die "usage: move <id> top|bottom" ;;
-  esac
-  # Renumber the whole queue in the new order, via temp names so nothing collides.
-  for f in "${ordered[@]}"; do mv "$f" "$f.tmp"; done
-  for f in "${ordered[@]}"; do
-    i=$((i + 1)); slug=$(basename "$f" .md | cut -c6-)
-    mv "$f.tmp" "$PENDING/$(printf '%04d' "$i")-$slug.md"
-  done
-  echo "reordered:"; cmd_list
-}
-
-cmd_retry() {
-  local f; f=$(find_task "$FAILED" "${1:?usage: retry <id>}")
-  mv "$f" "$PENDING/"; echo "requeued $(basename "$f" .md)"
-}
-
-cmd_status() {
-  ensure_dirs
-  printf 'pending %d   done %d   failed %d   auto-chain %s\n' \
-    "$(ls "$PENDING"/*.md 2>/dev/null | wc -l | tr -d ' ')" \
-    "$(ls "$DONE"/*.md 2>/dev/null | wc -l | tr -d ' ')" \
-    "$(ls "$FAILED"/*.md 2>/dev/null | wc -l | tr -d ' ')" \
-    "$([ -f "$QUEUE_DIR/auto" ] && echo on || echo off)"
-}
-
-cmd_log() {
-  local id; id=$(printf '%04d' $(( 10#${1:?usage: log <id>} )))
-  cat "$LOGS"/"$id"-*.log 2>/dev/null || die "no log for $id"
-}
-
-cmd_run() {
-  local continue_session=0 keep_going=0 dry=0 yolo=0
-  local extra=()
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      -c|--continue)   continue_session=1 ;;
-      -k|--keep-going) keep_going=1 ;;
-      -y|--yolo)       yolo=1 ;;
-      -n|--dry-run)    dry=1 ;;
-      --) shift; extra=("$@"); break ;;
-      *) die "unknown run option: $1" ;;
-    esac
-    shift
-  done
-  ensure_dirs
-  command -v claude >/dev/null || die "claude not found on PATH"
-
-  local f name prompt log started first=1 ran=0 failed=0
-  while :; do
-    f=$(first_pending)
-    if [ -z "$f" ]; then
-      echo "queue drained: $ran ran, $failed failed"
-      [ "$failed" -eq 0 ]
-      return
-    fi
-    name=$(basename "$f" .md)
-    prompt=$(cat "$f")
-    log="$LOGS/$name.log"
-
-    local args=(-p "$prompt")
-    if [ "$yolo" -eq 1 ]; then args+=(--dangerously-skip-permissions)
-    else args+=(--permission-mode "${CLAUDE_QUEUE_PERMISSION_MODE:-acceptEdits}"); fi
-    [ "$continue_session" -eq 1 ] && [ "$first" -eq 0 ] && args+=(--continue)
-    [ ${#extra[@]} -gt 0 ] && args+=("${extra[@]}")
-
-    if [ "$dry" -eq 1 ]; then
-      echo "would run $name:"; printf '   %s\n' "$(head -1 "$f")"
-      mv "$f" "$DONE/"; first=0; ran=$((ran + 1)); continue
-    fi
-
-    echo "▶ $name  ($(date '+%H:%M:%S'))"
-    started=$(date +%s)
-    printf '%s\t%s\n' "$name" "$started" > "$QUEUE_DIR/running"
-    trap 'rm -f "$QUEUE_DIR/running"' EXIT
-    { printf '### %s\n### %s\n\n' "$name" "$(date)"; printf '%s\n\n---\n\n' "$prompt"; } > "$log"
-    # CLAUDE_QUEUE_BATCH tells the Stop hook to stay out of headless runs.
-    if CLAUDE_QUEUE_BATCH=1 claude "${args[@]}" </dev/null 2>&1 | tee -a "$log"; then
-      mv "$f" "$DONE/"
-      echo "✔ $name  ($(( $(date +%s) - started ))s)"
+run() {
+  local f name log
+  while f=$(ls "$Q/pending"/*.md 2>/dev/null | head -1) && [ -n "$f" ]; do
+    name=$(basename "$f" .md); log="$Q/logs/$name.log"
+    echo "▶ $(head -1 "$f")"
+    if CLAUDE_QUEUE_BATCH=1 claude -p "$(cat "$f")" --permission-mode "${CLAUDE_QUEUE_PERMISSION_MODE:-acceptEdits}" "$@" </dev/null 2>&1 | tee "$log"; then
+      mv "$f" "$Q/done/"; echo "✔ $name"
     else
-      mv "$f" "$FAILED/"
-      failed=$((failed + 1))
-      echo "✘ $name failed — see ${log#$PWD/}" >&2
-      if [ "$keep_going" -eq 0 ]; then
-        echo "stopping; fix and \`claude-queue retry ${name%%-*}\` then \`claude-queue run\`" >&2
-        return 1
-      fi
+      echo "✘ $name  (left in pending, log: $log)"; exit 1
     fi
-    rm -f "$QUEUE_DIR/running"
-    first=0; ran=$((ran + 1))
   done
+  echo "queue empty"
 }
 
-cmd_watch() {
-  ensure_dirs
-  local key name started f n rows
-  printf '\033[?25l'                                   # hide cursor
-  trap 'printf "\033[?25h"; echo' EXIT
-  while :; do
-    rows=$(tput lines 2>/dev/null || echo 24)
-    printf '\033[H\033[2J'                             # clear
-    printf '\033[1mclaude-queue\033[0m  %s   auto-chain %s   %s\n\n' \
-      "${QUEUE_DIR%/.claude-queue}" "$([ -f "$QUEUE_DIR/auto" ] && echo on || echo off)" "$(date '+%H:%M:%S')"
-    if [ -f "$QUEUE_DIR/running" ]; then
-      IFS=$'\t' read -r name started < "$QUEUE_DIR/running"
-      printf '\033[33m● running\033[0m  %s  (%ds)\n' "$name" "$(( $(date +%s) - started ))"
-      tail -n $(( rows > 20 ? 6 : 3 )) "$LOGS/$name.log" 2>/dev/null | cut -c1-"$(tput cols)" | sed 's/^/    /'
-      echo
-    else
-      printf '\033[2m○ idle\033[0m  (start with: claude-queue run)\n\n'
-    fi
-    printf '\033[1mpending\033[0m\n'
-    n=0
-    for f in "$PENDING"/*.md; do
-      [ -e "$f" ] || break
-      n=$((n + 1)); printf '  %s  %s\n' "$(basename "$f" .md | cut -c1-4)" "$(head -1 "$f" | cut -c1-70)"
-    done
-    [ "$n" -gt 0 ] || echo "  (empty)"
-    printf '\n\033[2mdone %s   failed %s   —   q quit\033[0m\n' \
-      "$(ls "$DONE"/*.md 2>/dev/null | wc -l | tr -d ' ')" "$(ls "$FAILED"/*.md 2>/dev/null | wc -l | tr -d ' ')"
-    key=""
-    read -t 2 -n 1 -s key 2>/dev/null || true
-    [ "$key" = "q" ] && return 0
-  done
-}
-
-# `q`: what the /q slash command calls. No args = list, anything else = add.
-cmd_q() {
-  if [ $# -eq 0 ]; then cmd_list; else cmd_add "$@"; fi
-}
-
-cmd_auto() {
-  ensure_dirs
+auto() {
   case "${1:-}" in
-    on)  touch "$QUEUE_DIR/auto"; echo "auto-chain on: the Stop hook will feed queued tasks into your interactive session" ;;
-    off) rm -f "$QUEUE_DIR/auto"; echo "auto-chain off" ;;
-    *)   die "usage: auto on|off" ;;
+    on)  touch "$Q/auto"; echo "auto on" ;;
+    off) rm -f "$Q/auto"; echo "auto off" ;;
+    *)   [ -f "$Q/auto" ] && echo on || echo off ;;
   esac
 }
 
-add_hook_to() {
-  local settings="$1"
-  mkdir -p "$(dirname "$settings")"
-  [ -f "$settings" ] || echo '{}' > "$settings"
-  if grep -q "stop-hook.sh" "$settings"; then
-    echo "Stop hook already present in $settings"; return
-  fi
-  local tmp; tmp=$(mktemp)
-  jq --arg cmd "$HOOK_SCRIPT" \
-    '.hooks.Stop = ((.hooks.Stop // []) + [{"hooks":[{"type":"command","command":$cmd}]}])' \
-    "$settings" > "$tmp" && mv "$tmp" "$settings"
-  echo "added Stop hook to $settings"
-}
-
-cmd_install_hook() {
-  add_hook_to ".claude/settings.json"
-  echo "next: claude-queue auto on   (the hook only chains while auto is on)"
-}
-
-cmd_install() {
-  # 1. put claude-queue on PATH
-  local bindir link
-  for bindir in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
-    [ -d "$bindir" ] && [ -w "$bindir" ] && break
-  done
-  mkdir -p "$bindir"
-  link="$bindir/claude-queue"
-  if [ -L "$link" ] || [ -e "$link" ]; then rm -f "$link"; fi
-  ln -s "$REPO_DIR/bin/claude-queue" "$link"
-  echo "linked $link"
-  case ":$PATH:" in *":$bindir:"*) ;; *) echo "  add to your shell rc:  export PATH=\"$bindir:\$PATH\"" ;; esac
-
-  # 2. user-level Stop hook: applies in every project, chains only where \`auto on\` is set
-  add_hook_to "$HOME/.claude/settings.json"
-
-  # 3. /q slash command inside any Claude Code session
-  mkdir -p "$HOME/.claude/commands"
-  cp "$REPO_DIR/commands/q.md" "$HOME/.claude/commands/q.md"
-  echo "installed /q slash command ($HOME/.claude/commands/q.md)"
-
-  cat <<DONE
-
-ready. in any project:
-  claude-queue add "next thing"     queue from the shell
-  /q next thing                 queue from inside a claude session
-  claude-queue run                  run the queue headless, one task at a time
-  claude-queue auto on              or let your interactive session pick tasks up when it finishes
-  claude-queue watch                live dashboard
-DONE
+setup() {
+  local bin s=~/.claude/settings.json
+  for bin in /opt/homebrew/bin /usr/local/bin ~/.local/bin; do [ -w "$bin" ] && break; done
+  mkdir -p "$bin" ~/.claude/commands
+  ln -sf "$REPO/bin/claude-queue" "$bin/claude-queue"
+  cp "$REPO/commands/q.md" ~/.claude/commands/q.md
+  [ -f "$s" ] || echo '{}' > "$s"
+  grep -q stop-hook.sh "$s" || { jq --arg c "$REPO/hooks/stop-hook.sh" '.hooks.Stop += [{hooks:[{type:"command",command:$c}]}]' "$s" > "$s.tmp" && mv "$s.tmp" "$s"; }
+  echo "installed: $bin/claude-queue, /q command, Stop hook"
 }
 
 case "${1:-}" in
-  add)          shift; cmd_add "$@" ;;
-  q)            shift; cmd_q "$@" ;;
-  list|ls)      cmd_list ;;
-  show)         shift; cmd_show "$@" ;;
-  edit)         shift; cmd_edit "$@" ;;
-  rm|remove)    shift; cmd_rm "$@" ;;
-  move)         shift; cmd_move "$@" ;;
-  clear)        cmd_clear ;;
-  run)          shift; cmd_run "$@" ;;
-  retry)        shift; cmd_retry "$@" ;;
-  status)       cmd_status ;;
-  log)          shift; cmd_log "$@" ;;
-  auto)         shift; cmd_auto "$@" ;;
-  install)      cmd_install ;;
-  install-hook) cmd_install_hook ;;
-  watch)        cmd_watch ;;
-  -v|--version) echo "$VERSION" ;;
-  ""|-h|--help|help) usage ;;
-  *) die "unknown command '$1' (try --help)" ;;
+  add)     shift; add "$@" ;;
+  list|ls) list ;;
+  rm)      remove "${2:-}" ;;
+  run)     shift; run "$@" ;;
+  auto)    auto "${2:-}" ;;
+  install) setup ;;
+  q)       shift; [ $# -eq 0 ] && list || add "$@" ;;
+  *)       usage ;;
 esac

@@ -1,11 +1,11 @@
 ---
-description: Queue a task to run after the current work finishes — /q <task>. Bare /q lists the queue.
+description: Queue a task to run after the current work finishes. /q <task> adds, bare /q lists.
 allowed-tools: Bash(claude-queue:*)
 ---
-The user ran `/q $ARGUMENTS`. The claude-queue CLI already executed it; here is the output:
+The user ran `/q $ARGUMENTS`. Output:
 
 ```
 !`claude-queue q $ARGUMENTS`
 ```
 
-Report the result to the user in one short line. Do not start working on any queued task now — queued tasks run later, one at a time, after the current work is finished.
+Report the result in one short line. Do not start any queued task now; they run one at a time after the current work is finished.

@@ -21,7 +21,7 @@ terminal**:
 2. adds a Stop hook to `~/.claude/settings.json` (user level, so it's active in
    every project; it only chains tasks where you've run `claude-queue auto on`)
 3. installs a `/q` slash command into `~/.claude/commands/`, so inside any
-   Claude session you can type `/q add write tests for the parser`
+   Claude session you can type `/q write tests for the parser`
 
 Needs `bash`, `jq`, and the `claude` CLI on your PATH. The queue itself is
 per project: it lives in `./.claude-queue/` of whatever directory you're in.
@@ -68,8 +68,8 @@ claude-queue auto on        # hook was installed globally by `claude-queue insta
 claude                      # start (or keep using) your interactive session
 ```
 
-From another terminal, `claude-queue add "..."` whenever you think of the next
-thing. When Claude finishes its current turn, the hook hands it the first
+Type `/q <next thing>` in the session, or `claude-queue add "..."` from
+another terminal, whenever you think of the next task. When Claude finishes its current turn, the hook hands it the first
 pending task; when the queue is empty, Claude stops as usual. `claude-queue auto
 off` pauses chaining without removing the hook.
 
@@ -105,7 +105,7 @@ your interactive session.
 | `watch` | live dashboard |
 | `auto on\|off` | interactive-mode chaining |
 | `install` / `install-hook` | one-time setup / project-only Stop hook |
-| `/q <args>` (inside Claude) | same commands from a Claude session |
+| `/q <task>` (inside Claude) | queue a task from a Claude session; `/q list`, `/q rm 2`, `/q move 3 top` etc. also work |
 
 `CLAUDE_QUEUE_DIR` overrides the queue location (default `./.claude-queue`).
 Add `.claude-queue/` to your project's `.gitignore`.

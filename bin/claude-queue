@@ -29,6 +29,7 @@ claude-queue $VERSION — run Claude Code tasks sequentially
 usage: claude-queue <command> [args]
 
   add <prompt...>        queue a task (also: add -f file.md, or pipe on stdin)
+  q [<prompt...>]        add, unless the first word is a subcommand (used by /q)
   list                   show pending tasks in run order
   show <id>              print a task's full prompt
   edit <id>              open a task in \$EDITOR
@@ -68,11 +69,15 @@ slugify() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//' | cut -c1-40
 }
 
-# find_task <dir> <id-or-prefix> -> path
+# find_task <dir> <id-or-position> -> path. Tries the 4-digit id first, then
+# falls back to the 1-based position shown by `list`.
 find_task() {
   local dir="$1" id="$2" match
   id=$(printf '%04d' $(( 10#$id )) 2>/dev/null || printf '%s' "$id")
   match=$(ls "$dir"/"$id"-*.md 2>/dev/null | head -1 || true)
+  if [ -z "$match" ] && [ "$dir" = "$PENDING" ]; then
+    match=$(ls "$PENDING"/*.md 2>/dev/null | sed -n "$(( 10#$2 ))p" || true)
+  fi
   [ -n "$match" ] || die "no task '$2' in $(basename "$dir")/"
   printf '%s' "$match"
 }
@@ -256,6 +261,20 @@ cmd_watch() {
   done
 }
 
+# `q`: what the /q slash command calls. A known subcommand dispatches as usual;
+# anything else is the text of a new task. No args = list.
+cmd_q() {
+  case "${1:-}" in
+    "")                                   cmd_list ;;
+    list|ls|status|clear)                 cmd_"$1" ;;
+    show|edit|rm|remove|move|retry|log|auto)
+      local c="$1"; shift
+      case "$c" in remove) c=rm ;; esac
+      cmd_"$c" "$@" ;;
+    *)                                    cmd_add "$@" ;;
+  esac
+}
+
 cmd_auto() {
   ensure_dirs
   case "${1:-}" in
@@ -309,7 +328,7 @@ cmd_install() {
 
 ready. in any project:
   claude-queue add "next thing"     queue from the shell
-  /q add next thing             queue from inside a claude session
+  /q next thing                 queue from inside a claude session
   claude-queue run                  run the queue headless, one task at a time
   claude-queue auto on              or let your interactive session pick tasks up when it finishes
   claude-queue watch                live dashboard
@@ -318,6 +337,7 @@ DONE
 
 case "${1:-}" in
   add)          shift; cmd_add "$@" ;;
+  q)            shift; cmd_q "$@" ;;
   list|ls)      cmd_list ;;
   show)         shift; cmd_show "$@" ;;
   edit)         shift; cmd_edit "$@" ;;

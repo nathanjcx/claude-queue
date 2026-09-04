@@ -44,8 +44,10 @@ usage: claude-queue <command> [args]
   retry <id>             move a failed task back to pending
   status                 counts for pending / done / failed
   log <id>               print the output log for a task
+  watch                  live dashboard of the queue (q to quit)
   auto on|off            let the Stop hook feed queued tasks into an interactive session
-  install-hook           add the Stop hook to ./.claude/settings.json
+  install                one-time setup: PATH symlink, user-level Stop hook, /queue slash command
+  install-hook           add the Stop hook to this project's .claude/settings.json only
 
 env:
   CLAUDE_QUEUE_DIR              queue location (default: ./.claude-queue)
@@ -200,6 +202,8 @@ cmd_run() {
 
     echo "▶ $name  ($(date '+%H:%M:%S'))"
     started=$(date +%s)
+    printf '%s\t%s\n' "$name" "$started" > "$QUEUE_DIR/running"
+    trap 'rm -f "$QUEUE_DIR/running"' EXIT
     { printf '### %s\n### %s\n\n' "$name" "$(date)"; printf '%s\n\n---\n\n' "$prompt"; } > "$log"
     # CLAUDE_QUEUE_BATCH tells the Stop hook to stay out of headless runs.
     if CLAUDE_QUEUE_BATCH=1 claude "${args[@]}" </dev/null 2>&1 | tee -a "$log"; then
@@ -214,7 +218,41 @@ cmd_run() {
         return 1
       fi
     fi
+    rm -f "$QUEUE_DIR/running"
     first=0; ran=$((ran + 1))
+  done
+}
+
+cmd_watch() {
+  ensure_dirs
+  local key name started f n rows
+  printf '\033[?25l'                                   # hide cursor
+  trap 'printf "\033[?25h"; echo' EXIT
+  while :; do
+    rows=$(tput lines 2>/dev/null || echo 24)
+    printf '\033[H\033[2J'                             # clear
+    printf '\033[1mclaude-queue\033[0m  %s   auto-chain %s   %s\n\n' \
+      "${QUEUE_DIR%/.claude-queue}" "$([ -f "$QUEUE_DIR/auto" ] && echo on || echo off)" "$(date '+%H:%M:%S')"
+    if [ -f "$QUEUE_DIR/running" ]; then
+      IFS=$'\t' read -r name started < "$QUEUE_DIR/running"
+      printf '\033[33m● running\033[0m  %s  (%ds)\n' "$name" "$(( $(date +%s) - started ))"
+      tail -n $(( rows > 20 ? 6 : 3 )) "$LOGS/$name.log" 2>/dev/null | cut -c1-"$(tput cols)" | sed 's/^/    /'
+      echo
+    else
+      printf '\033[2m○ idle\033[0m  (start with: claude-queue run)\n\n'
+    fi
+    printf '\033[1mpending\033[0m\n'
+    n=0
+    for f in "$PENDING"/*.md; do
+      [ -e "$f" ] || break
+      n=$((n + 1)); printf '  %s  %s\n' "$(basename "$f" .md | cut -c1-4)" "$(head -1 "$f" | cut -c1-70)"
+    done
+    [ "$n" -gt 0 ] || echo "  (empty)"
+    printf '\n\033[2mdone %s   failed %s   —   q quit\033[0m\n' \
+      "$(ls "$DONE"/*.md 2>/dev/null | wc -l | tr -d ' ')" "$(ls "$FAILED"/*.md 2>/dev/null | wc -l | tr -d ' ')"
+    key=""
+    read -t 2 -n 1 -s key 2>/dev/null || true
+    [ "$key" = "q" ] && return 0
   done
 }
 
@@ -227,19 +265,55 @@ cmd_auto() {
   esac
 }
 
-cmd_install_hook() {
-  local settings=".claude/settings.json"
-  mkdir -p .claude
+add_hook_to() {
+  local settings="$1"
+  mkdir -p "$(dirname "$settings")"
   [ -f "$settings" ] || echo '{}' > "$settings"
   if grep -q "stop-hook.sh" "$settings"; then
-    echo "hook already present in $settings"; return
+    echo "Stop hook already present in $settings"; return
   fi
   local tmp; tmp=$(mktemp)
   jq --arg cmd "$HOOK_SCRIPT" \
     '.hooks.Stop = ((.hooks.Stop // []) + [{"hooks":[{"type":"command","command":$cmd}]}])' \
     "$settings" > "$tmp" && mv "$tmp" "$settings"
   echo "added Stop hook to $settings"
+}
+
+cmd_install_hook() {
+  add_hook_to ".claude/settings.json"
   echo "next: claude-queue auto on   (the hook only chains while auto is on)"
+}
+
+cmd_install() {
+  # 1. put claude-queue on PATH
+  local bindir link
+  for bindir in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
+    [ -d "$bindir" ] && [ -w "$bindir" ] && break
+  done
+  mkdir -p "$bindir"
+  link="$bindir/claude-queue"
+  if [ -L "$link" ] || [ -e "$link" ]; then rm -f "$link"; fi
+  ln -s "$REPO_DIR/bin/claude-queue" "$link"
+  echo "linked $link"
+  case ":$PATH:" in *":$bindir:"*) ;; *) echo "  add to your shell rc:  export PATH=\"$bindir:\$PATH\"" ;; esac
+
+  # 2. user-level Stop hook: applies in every project, chains only where \`auto on\` is set
+  add_hook_to "$HOME/.claude/settings.json"
+
+  # 3. /queue slash command inside any Claude Code session
+  mkdir -p "$HOME/.claude/commands"
+  cp "$REPO_DIR/commands/queue.md" "$HOME/.claude/commands/queue.md"
+  echo "installed /queue slash command ($HOME/.claude/commands/queue.md)"
+
+  cat <<DONE
+
+ready. in any project:
+  claude-queue add "next thing"     queue from the shell
+  /queue add next thing             queue from inside a claude session
+  claude-queue run                  run the queue headless, one task at a time
+  claude-queue auto on              or let your interactive session pick tasks up when it finishes
+  claude-queue watch                live dashboard
+DONE
 }
 
 case "${1:-}" in
@@ -255,7 +329,9 @@ case "${1:-}" in
   status)       cmd_status ;;
   log)          shift; cmd_log "$@" ;;
   auto)         shift; cmd_auto "$@" ;;
+  install)      cmd_install ;;
   install-hook) cmd_install_hook ;;
+  watch)        cmd_watch ;;
   -v|--version) echo "$VERSION" ;;
   ""|-h|--help|help) usage ;;
   *) die "unknown command '$1' (try --help)" ;;

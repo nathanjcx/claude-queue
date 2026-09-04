@@ -11,10 +11,20 @@ and reorder them with any tool. Nothing runs in parallel.
 
 ```sh
 git clone <this repo> ~/claude-queue
-ln -s ~/claude-queue/bin/claude-queue /usr/local/bin/claude-queue
+~/claude-queue/bin/claude-queue install
 ```
 
-Needs `bash`, `jq`, and the `claude` CLI on your PATH.
+`install` does three things, once, so the queue works in **any project and any
+terminal**:
+
+1. symlinks `claude-queue` into a directory on your PATH
+2. adds a Stop hook to `~/.claude/settings.json` (user level, so it's active in
+   every project; it only chains tasks where you've run `claude-queue auto on`)
+3. installs a `/queue` slash command into `~/.claude/commands/`, so inside any
+   Claude session you can type `/queue add write tests for the parser`
+
+Needs `bash`, `jq`, and the `claude` CLI on your PATH. The queue itself is
+per project: it lives in `./.claude-queue/` of whatever directory you're in.
 
 ## Two ways to use it
 
@@ -54,8 +64,7 @@ task each time Claude finishes:
 
 ```sh
 cd ~/code/my-app
-claude-queue install-hook   # adds a Stop hook to ./.claude/settings.json
-claude-queue auto on
+claude-queue auto on        # hook was installed globally by `claude-queue install`
 claude                      # start (or keep using) your interactive session
 ```
 
@@ -63,6 +72,17 @@ From another terminal, `claude-queue add "..."` whenever you think of the next
 thing. When Claude finishes its current turn, the hook hands it the first
 pending task; when the queue is empty, Claude stops as usual. `claude-queue auto
 off` pauses chaining without removing the hook.
+
+## Dashboard
+
+```sh
+claude-queue watch
+```
+
+A live terminal view: the task currently running with elapsed time and the
+tail of its log, the pending list, and done/failed counts. Refreshes every
+two seconds; `q` quits. Run it in a split pane next to `claude-queue run` or
+your interactive session.
 
 ## Commands
 
@@ -76,7 +96,10 @@ off` pauses chaining without removing the hook.
 | `run [-c] [-k] [-y] [-n] [-- claude args]` | run the queue |
 | `retry <id>` | move a failed task back to pending |
 | `status` / `log <id>` | counts, or a task's saved output |
-| `auto on\|off` / `install-hook` | interactive-mode chaining |
+| `watch` | live dashboard |
+| `auto on\|off` | interactive-mode chaining |
+| `install` / `install-hook` | one-time setup / project-only Stop hook |
+| `/queue <args>` (inside Claude) | same commands from a Claude session |
 
 `CLAUDE_QUEUE_DIR` overrides the queue location (default `./.claude-queue`).
 Add `.claude-queue/` to your project's `.gitignore`.
@@ -89,5 +112,6 @@ Add `.claude-queue/` to your project's `.gitignore`.
   done/
   failed/
   logs/0001-add-a-health-endpoint.log
+  running         # present while `run` has a task in flight
   auto            # present = Stop hook chaining enabled
 ```

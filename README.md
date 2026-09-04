@@ -98,14 +98,14 @@ your interactive session.
 | `list` | pending tasks in run order |
 | `show <id>` / `edit <id>` | view or edit a task's prompt |
 | `move <id> top\|bottom` | reorder |
-| `rm <id>` / `clear` | drop one / all pending tasks |
+| `rm [id]` / `clear` | drop one (no id: arrow-key picker) / all pending tasks |
 | `run [-c] [-k] [-y] [-n] [-- claude args]` | run the queue |
 | `retry <id>` | move a failed task back to pending |
 | `status` / `log <id>` | counts, or a task's saved output |
 | `watch` | live dashboard |
 | `auto on\|off` | interactive-mode chaining |
 | `install` / `install-hook` | one-time setup / project-only Stop hook |
-| `/q <task>` (inside Claude) | queue a task from a Claude session; `/q list`, `/q rm 2`, `/q move 3 top` etc. also work |
+| `/q <task>` (inside Claude) | queue a task; bare `/q` lists, `/q rm` opens a pick-to-remove menu |
 
 `CLAUDE_QUEUE_DIR` overrides the queue location (default `./.claude-queue`).
 Add `.claude-queue/` to your project's `.gitignore`.

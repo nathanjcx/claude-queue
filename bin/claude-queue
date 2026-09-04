@@ -29,11 +29,11 @@ claude-queue $VERSION — run Claude Code tasks sequentially
 usage: claude-queue <command> [args]
 
   add <prompt...>        queue a task (also: add -f file.md, or pipe on stdin)
-  q [<prompt...>]        add, unless the first word is a subcommand (used by /q)
+  q [<prompt...>]        add; or list / rm [id] (what /q calls)
   list                   show pending tasks in run order
   show <id>              print a task's full prompt
   edit <id>              open a task in \$EDITOR
-  rm <id>                remove a pending task
+  rm [id]                remove a pending task (no id: pick from a menu)
   move <id> top|bottom   reorder a task
   clear                  remove all pending tasks
   run [opts] [-- args]   run pending tasks one at a time until the queue is empty
@@ -118,8 +118,50 @@ cmd_list() {
 cmd_show() { cat "$(find_task "$PENDING" "${1:?usage: show <id>}")"; }
 cmd_edit() { "${EDITOR:-vi}" "$(find_task "$PENDING" "${1:?usage: edit <id>}")"; }
 
+# pick_pending: arrow-key menu over pending tasks, prints the chosen path.
+pick_pending() {
+  local files=() f i n sel=0 key
+  for f in "$PENDING"/*.md; do [ -e "$f" ] || break; files+=("$f"); done
+  n=${#files[@]}; [ "$n" -gt 0 ] || die "queue is empty"
+  printf '\033[?25l' >/dev/tty
+  trap 'printf "\033[?25h" >/dev/tty' EXIT
+  echo "remove which task?  (arrows/jk move, enter select, q cancel)" >/dev/tty
+  while :; do
+    i=0
+    for f in "${files[@]}"; do
+      if [ "$i" -eq "$sel" ]; then printf '\033[7m > %s  %s \033[0m\033[K\n' "$(basename "$f" .md | cut -c1-4)" "$(head -1 "$f" | cut -c1-70)" >/dev/tty
+      else printf '   %s  %s\033[K\n' "$(basename "$f" .md | cut -c1-4)" "$(head -1 "$f" | cut -c1-70)" >/dev/tty; fi
+      i=$((i + 1))
+    done
+    IFS= read -rsn1 key </dev/tty
+    case "$key" in
+      $'\x1b') key=""; IFS= read -rsn2 -t 1 key </dev/tty || true
+               case "$key" in '[A') sel=$(( (sel + n - 1) % n )) ;; '[B') sel=$(( (sel + 1) % n )) ;; esac ;;
+      k)  sel=$(( (sel + n - 1) % n )) ;;
+      j)  sel=$(( (sel + 1) % n )) ;;
+      "") break ;;
+      q)  printf '\033[?25h' >/dev/tty; echo "cancelled" >/dev/tty; return 1 ;;
+    esac
+    printf '\033[%dA' "$n" >/dev/tty
+  done
+  printf '\033[?25h' >/dev/tty
+  printf '%s' "${files[$sel]}"
+}
+
 cmd_rm() {
-  local f; f=$(find_task "$PENDING" "${1:?usage: rm <id>}")
+  local f
+  if [ -n "${1:-}" ]; then
+    f=$(find_task "$PENDING" "$1")
+  elif [ -t 1 ] && [ -r /dev/tty ]; then
+    f=$(pick_pending) || return 0
+  else
+    # no terminal (e.g. the /q slash command): emit a list the caller can turn into a menu
+    ensure_dirs
+    ls "$PENDING"/*.md >/dev/null 2>&1 || { echo "queue is empty"; return 0; }
+    echo "PICK_TO_REMOVE"
+    for f in "$PENDING"/*.md; do printf '%s  %s\n' "$(basename "$f" .md | cut -c1-4)" "$(head -1 "$f" | cut -c1-72)"; done
+    return 0
+  fi
   rm "$f"; echo "removed $(basename "$f" .md)"
 }
 
@@ -261,17 +303,14 @@ cmd_watch() {
   done
 }
 
-# `q`: what the /q slash command calls. A known subcommand dispatches as usual;
-# anything else is the text of a new task. No args = list.
+# `q`: what the /q slash command calls. Only add, list and rm; everything
+# else is the text of a new task. No args = list.
 cmd_q() {
   case "${1:-}" in
-    "")                                   cmd_list ;;
-    list|ls|status|clear)                 cmd_"$1" ;;
-    show|edit|rm|remove|move|retry|log|auto)
-      local c="$1"; shift
-      case "$c" in remove) c=rm ;; esac
-      cmd_"$c" "$@" ;;
-    *)                                    cmd_add "$@" ;;
+    "")         cmd_list ;;
+    list|ls)    cmd_list ;;
+    rm|remove)  shift; cmd_rm "$@" ;;
+    *)          cmd_add "$@" ;;
   esac
 }
 

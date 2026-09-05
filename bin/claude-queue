@@ -84,6 +84,8 @@ case "${1:-}" in
   run)     shift; run "$@" ;;
   auto)    auto "${2:-}" ;;
   install) setup ;;
-  q)       shift; [ $# -eq 0 ] && list || { touch "$Q/auto"; add "$@"; echo "pending:"; list; } ;;
+  q)       shift; [ $# -gt 0 ] && text="$*" || text=$(cat)
+           [ -n "${text//[[:space:]]/}" ] || { list; exit; }
+           touch "$Q/auto"; printf '%s\n' "$text" | add; echo "pending:"; list ;;
   *)       usage ;;
 esac

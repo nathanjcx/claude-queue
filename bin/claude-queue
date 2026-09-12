@@ -5,6 +5,11 @@ Q="${CLAUDE_QUEUE_DIR:-$PWD/.claude-queue}"
 SELF=$0; while [ -L "$SELF" ]; do SELF=$(readlink "$SELF"); done
 REPO=$(cd "$(dirname "$SELF")/.." && pwd)
 mkdir -p "$Q/pending" "$Q/done" "$Q/logs"
+# The queue lives in the working directory, which is usually a repository — so it ignores itself.
+# Without this, a queued task and the transcript of running it sit untracked inside the project, and
+# one `git add -A` publishes both. A task is arbitrary text: often a key, a token, a private URL.
+[ -f "$Q/.gitignore" ] || printf '*\n' > "$Q/.gitignore"
+chmod 700 "$Q" 2>/dev/null || true
 
 usage() {
   cat <<U
@@ -20,12 +25,17 @@ U
 }
 
 add() {
-  local text last id slug
+  local text last id file
   [ $# -gt 0 ] && text="$*" || text=$(cat)
   last=$(ls "$Q/pending" "$Q/done" | grep -oE '^[0-9]{4}' | sort | tail -1 || true)
   id=$(printf '%04d' $(( 10#${last:-0} + 1 )))
-  slug=$(printf '%s' "$text" | head -1 | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | cut -c1-40 | sed 's/-$//')
-  printf '%s\n' "$text" > "$Q/pending/$id-$slug.md"
+  # The number alone. The task used to be summarised into the filename, which put whatever was
+  # typed into `ls`, into shell completion, and into every backup of the tree — and a filename is
+  # the one part of a file you can't read and then decide not to keep. `list` reads the first line
+  # out of the file instead, so nothing is lost from the display.
+  file="$Q/pending/$id.md"
+  printf '%s\n' "$text" > "$file"
+  chmod 600 "$file" 2>/dev/null || true
   echo "queued #$id  $(printf '%s' "$text" | head -1)"
 }
 
@@ -44,14 +54,14 @@ remove() {
 }
 
 run() {
-  local f name log
+  local f name log first
   while f=$(ls "$Q/pending"/*.md 2>/dev/null | head -1) && [ -n "$f" ]; do
-    name=$(basename "$f" .md); log="$Q/logs/$name.log"
-    echo "▶ $(head -1 "$f")"
+    name=$(basename "$f" .md); log="$Q/logs/$name.log"; first=$(head -1 "$f")
+    echo "▶ $first"
     if CLAUDE_QUEUE_BATCH=1 claude -p "$(cat "$f")" --permission-mode "${CLAUDE_QUEUE_PERMISSION_MODE:-acceptEdits}" "$@" </dev/null 2>&1 | tee "$log"; then
-      mv "$f" "$Q/done/"; echo "✔ $name"
+      mv "$f" "$Q/done/"; echo "✔ #$name  $first"
     else
-      echo "✘ $name  (left in pending, log: $log)"; exit 1
+      echo "✘ #$name  (left in pending, log: $log)"; exit 1
     fi
   done
   echo "queue empty"

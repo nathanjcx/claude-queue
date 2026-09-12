@@ -33,6 +33,21 @@ When that's done, the next one. When the queue is empty, it stops and waits for 
 - `claude-queue rm 2` removes the second task.
 - `claude-queue auto off` pauses the chaining for that project.
 
+## Where it keeps things
+
+Tasks live in `.claude-queue/` in the project you queued them from — pending, done, and a log of
+each run. The directory ignores itself with a `.gitignore` of its own, so none of it can be
+committed by a stray `git add -A`, and files are written `600` inside a `700` directory.
+
+Tasks are named by number, not by their text. A task is arbitrary text and often carries something
+private — an API key, a token, an internal URL — and a filename is the one part of a file you can't
+read before deciding whether to keep it. `claude-queue list` reads the first line out of each file,
+so the display is unchanged.
+
+None of that makes a queued secret safe to forget about: it's still on disk in the clear, still in
+your shell history, and still in the transcript of whatever ran it. Rotate anything you wouldn't
+have typed into a terminal.
+
 ## Headless
 
 Don't want a session open? Queue from the shell and run the whole list:

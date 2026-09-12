@@ -12,6 +12,10 @@ git clone https://github.com/nathanjcx/claude-queue ~/claude-queue
 
 Requires `bash`, `jq`, and the `claude` CLI. Restart any open Claude sessions afterwards.
 
+If `/q` answers `command not found`, the install didn't take. Check that `claude-queue` resolves
+(`which claude-queue`) and that `~/claude-queue` is still where the hooks in `~/.claude/settings.json`
+point — those paths are absolute, so moving or deleting the clone breaks them silently.
+
 ## Use
 
 While Claude is working on something, type the next thing into the same session:

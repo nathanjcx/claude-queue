@@ -66,8 +66,16 @@ auto() {
 }
 
 setup() {
-  local bin s=~/.claude/settings.json
-  for bin in /opt/homebrew/bin /usr/local/bin ~/.local/bin; do [ -w "$bin" ] && break; done
+  local bin="" candidate s=~/.claude/settings.json
+  # Prefer somewhere writable that is *also* on PATH. Picking on writability alone can drop the
+  # symlink where the shell will never look, which installs cleanly and then fails at the first /q
+  # with "command not found" — with nothing to suggest the install was the problem.
+  for candidate in /opt/homebrew/bin /usr/local/bin ~/.local/bin; do
+    [ -w "$candidate" ] || continue
+    [ -n "$bin" ] || bin="$candidate"
+    case ":$PATH:" in *":$candidate:"*) bin="$candidate"; break ;; esac
+  done
+  [ -n "$bin" ] || bin=~/.local/bin
   mkdir -p "$bin" ~/.claude/commands
   ln -sf "$REPO/bin/claude-queue" "$bin/claude-queue"
   cp "$REPO/commands/q.md" ~/.claude/commands/q.md
@@ -75,6 +83,10 @@ setup() {
   grep -q stop-hook.sh "$s" || { jq --arg c "$REPO/hooks/stop-hook.sh" '.hooks.Stop += [{hooks:[{type:"command",command:$c}]}]' "$s" > "$s.tmp" && mv "$s.tmp" "$s"; }
   grep -q session-start.sh "$s" || { jq --arg c "$REPO/hooks/session-start.sh" '.hooks.SessionStart += [{matcher:"startup",hooks:[{type:"command",command:$c}]}]' "$s" > "$s.tmp" && mv "$s.tmp" "$s"; }
   echo "installed: $bin/claude-queue, /q command, Stop and SessionStart hooks"
+  command -v claude-queue >/dev/null 2>&1 || cat <<WARN
+warning: $bin is not on your PATH, so /q won't find claude-queue.
+         Add it to your shell profile:  export PATH="$bin:\$PATH"
+WARN
 }
 
 case "${1:-}" in

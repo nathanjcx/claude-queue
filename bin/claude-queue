@@ -88,14 +88,19 @@ setup() {
   [ -n "$bin" ] || bin=~/.local/bin
   mkdir -p "$bin" ~/.claude/commands
   ln -sf "$REPO/bin/claude-queue" "$bin/claude-queue"
-  cp "$REPO/commands/q.md" ~/.claude/commands/q.md
+  # /q calls the script by absolute path, the same way the hooks do. Claude Code is not
+  # always started from a login shell — an app that spawns it, a launchd job, an IDE — and such
+  # a session inherits the bare system PATH, where no symlink of ours will ever be found. The
+  # PATH symlink above is for typing `claude-queue` in a terminal; /q must not depend on it.
+  local command; command=$(<"$REPO/commands/q.md")
+  printf '%s\n' "${command//\{\{CLAUDE_QUEUE\}\}/$REPO/bin/claude-queue}" > ~/.claude/commands/q.md
   [ -f "$s" ] || echo '{}' > "$s"
   grep -q stop-hook.sh "$s" || { jq --arg c "$REPO/hooks/stop-hook.sh" '.hooks.Stop += [{hooks:[{type:"command",command:$c}]}]' "$s" > "$s.tmp" && mv "$s.tmp" "$s"; }
   grep -q session-start.sh "$s" || { jq --arg c "$REPO/hooks/session-start.sh" '.hooks.SessionStart += [{matcher:"startup",hooks:[{type:"command",command:$c}]}]' "$s" > "$s.tmp" && mv "$s.tmp" "$s"; }
   echo "installed: $bin/claude-queue, /q command, Stop and SessionStart hooks"
   command -v claude-queue >/dev/null 2>&1 || cat <<WARN
-warning: $bin is not on your PATH, so /q won't find claude-queue.
-         Add it to your shell profile:  export PATH="$bin:\$PATH"
+note: $bin is not on your PATH. /q works regardless, but to type claude-queue in a
+      terminal add it to your shell profile:  export PATH="$bin:\$PATH"
 WARN
 }
 

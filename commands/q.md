@@ -1,11 +1,11 @@
 ---
 description: Queue a task to run after the current work finishes. /q <task> adds, bare /q lists.
-allowed-tools: Bash(claude-queue:*)
+allowed-tools: Bash({{CLAUDE_QUEUE}}:*)
 ---
 The user ran `/q $ARGUMENTS`. Output:
 
 ```
-!`claude-queue q <<'CLAUDE_QUEUE_EOF'
+!`{{CLAUDE_QUEUE}} q <<'CLAUDE_QUEUE_EOF'
 $ARGUMENTS
 CLAUDE_QUEUE_EOF`
 ```
